@@ -19,46 +19,32 @@ count_lines() {
     wc -l < "$1" | tr -d ' '
 }
 
-# Temporary files
-ADDED_FILES=$(mktemp)
-MODIFIED_FILES=$(mktemp)
-DELETED_FILES=$(mktemp)
-BINARY_FILES=$(mktemp)
-
 # Analyze the patch file
 echo "Analyzing patch file..."
 
-while IFS= read -r line; do
-    if [[ $line == "diff --git"* ]]; then
-        file_a=$(echo "$line" | cut -d' ' -f3)
-        file_b=$(echo "$line" | cut -d' ' -f4)
-        file=${file_b#*/}
-        
-        # Only process .jsx, .css, .js, and .scss files
+# Extract file names and changes
+grep -E "^diff --git|^new file mode|^deleted file mode|^Binary files" "$PATCH_FILE" | 
+while read -r line; do
+    if [[ $line == diff* ]]; then
+        file=$(echo "$line" | cut -d' ' -f4 | sed 's|^b/||')
         if [[ $file =~ \.(jsx|css|js|scss)$ ]]; then
-            if grep -q "^new file mode" <<< "$(sed -n "/$line/,/^diff --git/p" "$PATCH_FILE")"; then
-                echo "$file" >> "$ADDED_FILES"
-            elif grep -q "^deleted file mode" <<< "$(sed -n "/$line/,/^diff --git/p" "$PATCH_FILE")"; then
-                echo "$file" >> "$DELETED_FILES"
-            else
-                echo "$file" >> "$MODIFIED_FILES"
-            fi
-
-            if grep -q "^Binary files" <<< "$(sed -n "/$line/,/^diff --git/p" "$PATCH_FILE")"; then
-                echo "$file" >> "$BINARY_FILES"
-            fi
+            echo "$file"
         fi
+    elif [[ $line == "new file"* ]]; then
+        echo "A $file"
+    elif [[ $line == "deleted file"* ]]; then
+        echo "D $file"
+    elif [[ $line == "Binary"* ]]; then
+        echo "B $file"
     fi
-done < "$PATCH_FILE"
+done | sort | uniq > file_changes.tmp
 
 # Generate report
 echo "=== Patch Analysis Report ==="
 echo "Total lines in patch: $(count_lines "$PATCH_FILE")"
 echo ""
-echo "Added files: $(count_lines "$ADDED_FILES")"
-echo "Modified files: $(count_lines "$MODIFIED_FILES")"
-echo "Deleted files: $(count_lines "$DELETED_FILES")"
-echo "Binary files changed: $(count_lines "$BINARY_FILES")"
+echo "Changed files (.jsx, .css, .js, .scss):"
+cat file_changes.tmp | wc -l
 echo ""
 
 echo "Top 10 most changed files (.jsx, .css, .js, .scss):"
@@ -69,18 +55,8 @@ echo "Files most likely to cause conflicts (.jsx, .css, .js, .scss):"
 grep -E "^[+-]" "$PATCH_FILE" | grep -vE "^(---|\+\+\+)" | cut -c2- | grep -E "\.(jsx|css|js|scss)$" | sort | uniq -c | sort -rn | awk '$1 > 10 {print $0}' | head -n 10
 
 echo ""
-echo "Detailed file lists:"
-echo "Added files (.jsx, .css, .js, .scss):"
-cat "$ADDED_FILES"
-echo ""
-echo "Modified files (.jsx, .css, .js, .scss):"
-cat "$MODIFIED_FILES"
-echo ""
-echo "Deleted files (.jsx, .css, .js, .scss):"
-cat "$DELETED_FILES"
-echo ""
-echo "Binary files changed (.jsx, .css, .js, .scss):"
-cat "$BINARY_FILES"
+echo "Detailed file changes:"
+cat file_changes.tmp
 
 # Clean up temporary files
-rm "$ADDED_FILES" "$MODIFIED_FILES" "$DELETED_FILES" "$BINARY_FILES"
+rm file_changes.tmp
