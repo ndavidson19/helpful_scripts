@@ -28,22 +28,28 @@ BINARY_FILES=$(mktemp)
 # Analyze the patch file
 echo "Analyzing patch file..."
 
-grep "^diff --git" "$PATCH_FILE" | while read -r line; do
-    file_a=$(echo "$line" | cut -d' ' -f3)
-    file_b=$(echo "$line" | cut -d' ' -f4)
-    
-    if grep -q "^new file mode" <<< "$(sed -n "/$line/,/^diff --git/p" "$PATCH_FILE")"; then
-        echo "${file_b#*/}" >> "$ADDED_FILES"
-    elif grep -q "^deleted file mode" <<< "$(sed -n "/$line/,/^diff --git/p" "$PATCH_FILE")"; then
-        echo "${file_a#*/}" >> "$DELETED_FILES"
-    else
-        echo "${file_b#*/}" >> "$MODIFIED_FILES"
-    fi
+while IFS= read -r line; do
+    if [[ $line == "diff --git"* ]]; then
+        file_a=$(echo "$line" | cut -d' ' -f3)
+        file_b=$(echo "$line" | cut -d' ' -f4)
+        file=${file_b#*/}
+        
+        # Only process .jsx, .css, .js, and .scss files
+        if [[ $file =~ \.(jsx|css|js|scss)$ ]]; then
+            if grep -q "^new file mode" <<< "$(sed -n "/$line/,/^diff --git/p" "$PATCH_FILE")"; then
+                echo "$file" >> "$ADDED_FILES"
+            elif grep -q "^deleted file mode" <<< "$(sed -n "/$line/,/^diff --git/p" "$PATCH_FILE")"; then
+                echo "$file" >> "$DELETED_FILES"
+            else
+                echo "$file" >> "$MODIFIED_FILES"
+            fi
 
-    if grep -q "^Binary files" <<< "$(sed -n "/$line/,/^diff --git/p" "$PATCH_FILE")"; then
-        echo "${file_b#*/}" >> "$BINARY_FILES"
+            if grep -q "^Binary files" <<< "$(sed -n "/$line/,/^diff --git/p" "$PATCH_FILE")"; then
+                echo "$file" >> "$BINARY_FILES"
+            fi
+        fi
     fi
-done
+done < "$PATCH_FILE"
 
 # Generate report
 echo "=== Patch Analysis Report ==="
@@ -55,29 +61,25 @@ echo "Deleted files: $(count_lines "$DELETED_FILES")"
 echo "Binary files changed: $(count_lines "$BINARY_FILES")"
 echo ""
 
-echo "Top 10 most changed files:"
-grep -E "^[+-]" "$PATCH_FILE" | grep -vE "^(---|\+\+\+)" | cut -c2- | sort | uniq -c | sort -rn | head -n 10
+echo "Top 10 most changed files (.jsx, .css, .js, .scss):"
+grep -E "^[+-]" "$PATCH_FILE" | grep -vE "^(---|\+\+\+)" | cut -c2- | grep -E "\.(jsx|css|js|scss)$" | sort | uniq -c | sort -rn | head -n 10
 
 echo ""
-echo "Files most likely to cause conflicts:"
-grep -E "^[+-]" "$PATCH_FILE" | grep -vE "^(---|\+\+\+)" | cut -c2- | sort | uniq -c | sort -rn | head -n 10 | while read -r count file; do
-    if [ "$count" -gt 10 ]; then
-        echo "$count $file"
-    fi
-done
+echo "Files most likely to cause conflicts (.jsx, .css, .js, .scss):"
+grep -E "^[+-]" "$PATCH_FILE" | grep -vE "^(---|\+\+\+)" | cut -c2- | grep -E "\.(jsx|css|js|scss)$" | sort | uniq -c | sort -rn | awk '$1 > 10 {print $0}' | head -n 10
 
 echo ""
 echo "Detailed file lists:"
-echo "Added files:"
+echo "Added files (.jsx, .css, .js, .scss):"
 cat "$ADDED_FILES"
 echo ""
-echo "Modified files:"
+echo "Modified files (.jsx, .css, .js, .scss):"
 cat "$MODIFIED_FILES"
 echo ""
-echo "Deleted files:"
+echo "Deleted files (.jsx, .css, .js, .scss):"
 cat "$DELETED_FILES"
 echo ""
-echo "Binary files changed:"
+echo "Binary files changed (.jsx, .css, .js, .scss):"
 cat "$BINARY_FILES"
 
 # Clean up temporary files
