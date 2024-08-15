@@ -2,6 +2,9 @@
 
 set -eo pipefail
 
+# Enable debug mode
+set -x
+
 # Function to prompt for user input
 prompt_user() {
     local prompt="$1"
@@ -70,6 +73,7 @@ fi
 temp_dir=$(mktemp -d)
 trap 'rm -rf "$temp_dir"' EXIT
 
+echo "Cloning repositories..."
 # Clone repositories
 git clone "$fork_url" "$temp_dir/repo1"
 git clone "$original_url" "$temp_dir/repo2"
@@ -77,36 +81,47 @@ git clone "$original_url" "$temp_dir/repo2"
 # Change to the forked repository directory
 cd "$temp_dir/repo1"
 
+echo "Fetching from original repository..."
 # Fetch the original repository
 git remote add upstream "$original_url"
 git fetch upstream
 
+echo "Generating list of changed files..."
 # Generate the list of changed files
 changed_files=$(git diff --name-only "$common_ancestor" "$fork_branch")
 
 # Initialize an empty array to store whitelisted files
 whitelist=()
 
+echo "Analyzing changes..."
 # Check each changed file
 for file in $changed_files; do
+    echo "Checking file: $file"
     # Get the number of lines changed in repo1 compared to the common ancestor
     lines_changed_repo1=$(git diff "$common_ancestor" "$fork_branch" -- "$file" | grep -E '^[+-]' | wc -l)
     
     # Get the number of lines changed in repo2 compared to the common ancestor
     lines_changed_repo2=$(git diff "$common_ancestor" "upstream/$original_branch" -- "$file" | grep -E '^[+-]' | wc -l)
     
+    echo "Lines changed in repo1: $lines_changed_repo1"
+    echo "Lines changed in repo2: $lines_changed_repo2"
+    
     # Calculate the percentage of changes in repo1
     total_changes=$((lines_changed_repo1 + lines_changed_repo2))
     if [ "$total_changes" -ne 0 ]; then
         percentage=$((lines_changed_repo1 * 100 / total_changes))
         
+        echo "Percentage of changes in repo1: $percentage%"
+        
         # If the percentage of changes in repo1 is above the threshold, add to whitelist
         if [ "$percentage" -ge "$threshold" ]; then
             whitelist+=("$file")
+            echo "Added to whitelist: $file"
         fi
     fi
 done
 
+echo "Writing whitelist to file..."
 # Write the whitelist to the output file
 printf '%s\n' "${whitelist[@]}" > "$output_file"
 
@@ -114,3 +129,6 @@ echo "Whitelist generated and saved to $output_file"
 echo "Total files in whitelist: ${#whitelist[@]}"
 echo "You can use this whitelist with the merge script as follows:"
 echo "./merge_script.sh -m theirs -w $(paste -sd, "$output_file")"
+
+# Disable debug mode
+set +x
