@@ -1,6 +1,6 @@
 #!/bin/bash
 
-set -euo pipefail
+set -eo pipefail
 
 # Function to prompt for user input
 prompt_user() {
@@ -131,32 +131,34 @@ fi
 
 # Check remaining conflicts
 remaining_conflicts=$(git diff --name-only --diff-filter=U)
-if [ -n "$remaining_conflicts" ] && [ "$allow_conflicts" = false ]; then
-    echo "The following files still have conflicts that need manual resolution:"
-    echo "$remaining_conflicts"
-    echo "Please resolve these conflicts manually, then run 'git add' on the resolved files."
-    echo "After resolving conflicts, commit the changes and push the branch to your fork."
-    echo "Then, you can create a pull request from your fork to the original repository."
-else
-    if [ -z "$remaining_conflicts" ]; then
-        echo "All conflicts have been resolved automatically."
-        git commit -m "Merged changes from upstream/$original_branch"
-    else
+if [ -n "$remaining_conflicts" ]; then
+    if [ "$allow_conflicts" = true ]; then
         echo "Committing merge with unresolved conflicts."
+        git add .
         git commit -m "Merged changes from upstream/$original_branch (with conflicts)" --allow-empty
+    else
+        echo "The following files still have conflicts that need manual resolution:"
+        echo "$remaining_conflicts"
+        echo "Please resolve these conflicts manually, then run 'git add' on the resolved files."
+        echo "After resolving conflicts, commit the changes and push the branch to your fork."
+        echo "Then, you can create a pull request from your fork to the original repository."
     fi
-    
-    # Push the branch to the fork
-    git push -u origin "$merge_branch"
-    
-    # Construct the pull request URL
-    repo_name=$(basename -s .git "$(git remote get-url origin)")
-    pr_url="https://github.com/$github_username/$repo_name/compare/main...$merge_branch"
-    
-    echo "Changes have been pushed to your fork."
-    echo "To create a pull request, visit this URL:"
-    echo "$pr_url"
+else
+    echo "All conflicts have been resolved automatically."
+    git add .
+    git commit -m "Merged changes from upstream/$original_branch"
 fi
+
+# Push the branch to the fork
+git push -u origin "$merge_branch"
+
+# Construct the pull request URL
+repo_name=$(basename -s .git "$(git remote get-url origin)")
+pr_url="https://github.com/$github_username/$repo_name/compare/main...$merge_branch"
+
+echo "Changes have been pushed to your fork."
+echo "To create a pull request, visit this URL:"
+echo "$pr_url"
 
 echo "Merge process completed. The changes from the original repository have been merged into the '$merge_branch' branch."
 echo "To review the changes and resolve any remaining conflicts, you can:"
