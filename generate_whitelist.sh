@@ -2,9 +2,6 @@
 
 set -eo pipefail
 
-# Enable debug mode
-set -x
-
 # Function to prompt for user input
 prompt_user() {
     local prompt="$1"
@@ -36,19 +33,15 @@ validate_git_url() {
 }
 
 # Parse command line arguments
-threshold=50
 output_file="whitelist.txt"
 
-while getopts ":t:o:" opt; do
+while getopts ":o:" opt; do
     case ${opt} in
-        t )
-            threshold=$OPTARG
-            ;;
         o )
             output_file=$OPTARG
             ;;
         \? )
-            echo "Usage: $0 [-t threshold] [-o output_file]" 1>&2
+            echo "Usage: $0 [-o output_file]" 1>&2
             exit 1
             ;;
     esac
@@ -61,7 +54,6 @@ shift $((OPTIND -1))
 prompt_user "Enter the URL for your forked repository (repo1)" fork_url
 prompt_user "Enter the URL for the original repository (repo2)" original_url
 prompt_user "Enter the branch name in your forked repository" fork_branch "main"
-prompt_user "Enter the branch name in the original repository" original_branch "main"
 prompt_user "Enter the common ancestor commit hash" common_ancestor
 
 # Validate repository URLs
@@ -73,62 +65,25 @@ fi
 temp_dir=$(mktemp -d)
 trap 'rm -rf "$temp_dir"' EXIT
 
-echo "Cloning repositories..."
-# Clone repositories
+echo "Cloning repository..."
+# Clone only the forked repository (repo1)
 git clone "$fork_url" "$temp_dir/repo1"
-git clone "$original_url" "$temp_dir/repo2"
 
 # Change to the forked repository directory
 cd "$temp_dir/repo1"
 
-echo "Fetching from original repository..."
-# Fetch the original repository
-git remote add upstream "$original_url"
-git fetch upstream
-
 echo "Generating list of changed files..."
-# Generate the list of changed files
+# Generate the list of changed files in repo1 since the common ancestor
 changed_files=$(git diff --name-only "$common_ancestor" "$fork_branch")
 
-# Initialize an empty array to store whitelisted files
-whitelist=()
-
-echo "Analyzing changes..."
-# Check each changed file
-for file in $changed_files; do
-    echo "Checking file: $file"
-    # Get the number of lines changed in repo1 compared to the common ancestor
-    lines_changed_repo1=$(git diff "$common_ancestor" "$fork_branch" -- "$file" | grep -E '^[+-]' | wc -l)
-    
-    # Get the number of lines changed in repo2 compared to the common ancestor
-    lines_changed_repo2=$(git diff "$common_ancestor" "upstream/$original_branch" -- "$file" | grep -E '^[+-]' | wc -l)
-    
-    echo "Lines changed in repo1: $lines_changed_repo1"
-    echo "Lines changed in repo2: $lines_changed_repo2"
-    
-    # Calculate the percentage of changes in repo1
-    total_changes=$((lines_changed_repo1 + lines_changed_repo2))
-    if [ "$total_changes" -ne 0 ]; then
-        percentage=$((lines_changed_repo1 * 100 / total_changes))
-        
-        echo "Percentage of changes in repo1: $percentage%"
-        
-        # If the percentage of changes in repo1 is above the threshold, add to whitelist
-        if [ "$percentage" -ge "$threshold" ]; then
-            whitelist+=("$file")
-            echo "Added to whitelist: $file"
-        fi
-    fi
-done
-
-echo "Writing whitelist to file..."
-# Write the whitelist to the output file
-printf '%s\n' "${whitelist[@]}" > "$output_file"
+# Write the changed files to the output file
+echo "$changed_files" > "$output_file"
 
 echo "Whitelist generated and saved to $output_file"
-echo "Total files in whitelist: ${#whitelist[@]}"
+echo "Total files in whitelist: $(wc -l < "$output_file")"
 echo "You can use this whitelist with the merge script as follows:"
 echo "./merge_script.sh -m theirs -w $(paste -sd, "$output_file")"
 
-# Disable debug mode
-set +x
+# Display the contents of the whitelist
+echo "Contents of the whitelist:"
+cat "$output_file"
