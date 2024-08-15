@@ -32,33 +32,26 @@ validate_git_url() {
     fi
 }
 
-# Function to resolve conflicts automatically where possible
+# Function to resolve conflicts based on merge strategy
 resolve_conflicts() {
     local conflicts
     local unmerged_files=()
     conflicts=$(git diff --name-only --diff-filter=U)
     for file in $conflicts; do
-        if [[ $file == *.json ]]; then
-            if command -v jq &> /dev/null; then
-                if jq -s '.[0] * .[1]' "$file" > "${file}.merged"; then
-                    mv "${file}.merged" "$file"
-                    git add "$file"
-                    echo "Automatically resolved conflict in $file"
-                else
-                    echo "Could not automatically resolve conflict in $file"
-                    unmerged_files+=("$file")
-                fi
-            else
-                echo "jq is not installed. Skipping automatic resolution for $file"
-                unmerged_files+=("$file")
-            fi
-        elif [[ $file == *.css || $file == *.scss ]]; then
-            sed -e '/^<<<<<<</d' -e '/^>>>>>>>/d' -e '/^=======/d' "$file" > "${file}.merged"
-            mv "${file}.merged" "$file"
+        if [[ " ${whitelist[@]} " =~ " ${file} " ]]; then
+            git checkout --ours -- "$file"
             git add "$file"
-            echo "Kept both changes in $file (may need manual review)"
+            echo "Kept current changes for whitelisted file: $file"
+        elif [ "$merge_strategy" = "ours" ]; then
+            git checkout --ours -- "$file"
+            git add "$file"
+            echo "Kept current changes for: $file"
+        elif [ "$merge_strategy" = "theirs" ]; then
+            git checkout --theirs -- "$file"
+            git add "$file"
+            echo "Kept incoming changes for: $file"
         else
-            echo "Manual resolution needed for $file"
+            echo "Manual resolution needed for: $file"
             unmerged_files+=("$file")
         fi
     done
@@ -72,13 +65,30 @@ resolve_conflicts() {
 
 # Parse command line arguments
 allow_conflicts=false
-while getopts ":c" opt; do
+merge_strategy="manual"
+whitelist=()
+
+while getopts ":cm:w:" opt; do
     case ${opt} in
         c )
             allow_conflicts=true
             ;;
+        m )
+            merge_strategy=$OPTARG
+            if [[ ! "$merge_strategy" =~ ^(manual|ours|theirs)$ ]]; then
+                echo "Invalid merge strategy: $OPTARG" >&2
+                exit 1
+            fi
+            ;;
+        w )
+            IFS=',' read -ra whitelist <<< "$OPTARG"
+            ;;
         \? )
             echo "Invalid Option: -$OPTARG" 1>&2
+            exit 1
+            ;;
+        : )
+            echo "Invalid Option: -$OPTARG requires an argument" 1>&2
             exit 1
             ;;
     esac
@@ -121,11 +131,12 @@ git checkout -b "$merge_branch"
 # Merge changes from the original repo
 echo "Merging changes from the original repository..."
 if ! git merge --no-commit --no-ff "upstream/$original_branch"; then
-    if [ "$allow_conflicts" = true ]; then
-        echo "Conflicts detected, but -c flag is set. Proceeding with conflicted files."
-    else
-        echo "Merge resulted in conflicts. Attempting to resolve..."
+    if [ "$allow_conflicts" = true ] || [ "$merge_strategy" != "manual" ]; then
+        echo "Conflicts detected. Applying merge strategy: $merge_strategy"
         resolve_conflicts
+    else
+        echo "Merge resulted in conflicts. Use -m flag to specify a merge strategy or -c to allow conflicts."
+        exit 1
     fi
 fi
 
@@ -142,6 +153,7 @@ if [ -n "$remaining_conflicts" ]; then
         echo "Please resolve these conflicts manually, then run 'git add' on the resolved files."
         echo "After resolving conflicts, commit the changes and push the branch to your fork."
         echo "Then, you can create a pull request from your fork to the original repository."
+        exit 1
     fi
 else
     echo "All conflicts have been resolved automatically."
