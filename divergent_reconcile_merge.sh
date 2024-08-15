@@ -32,16 +32,6 @@ validate_git_url() {
     fi
 }
 
-# Function to safely clone a repository
-safe_clone() {
-    local url="$1"
-    local dir="$2"
-    if ! git clone "$url" "$dir"; then
-        echo "Error: Failed to clone repository: $url" >&2
-        exit 1
-    fi
-}
-
 # Function to resolve conflicts automatically where possible
 resolve_conflicts() {
     local conflicts
@@ -83,36 +73,39 @@ resolve_conflicts() {
 # Main script
 
 # Get repository URLs
-prompt_user "Enter the URL for the first repository" repo1_url
-prompt_user "Enter the URL for the second repository" repo2_url
+prompt_user "Enter the URL for your forked repository" fork_url
+prompt_user "Enter the URL for the original repository" original_url
+prompt_user "Enter the branch name in the original repository to merge from" original_branch "main"
+prompt_user "Enter your GitHub username" github_username
 
 # Validate repository URLs
-if ! validate_git_url "$repo1_url" || ! validate_git_url "$repo2_url"; then
+if ! validate_git_url "$fork_url" || ! validate_git_url "$original_url"; then
     exit 1
 fi
 
-# Create a temporary directory for our work
-temp_dir=$(mktemp -d)
-trap 'rm -rf "$temp_dir"' EXIT
+# Clone the forked repository
+if ! git clone "$fork_url" forked_repo; then
+    echo "Error: Failed to clone forked repository: $fork_url" >&2
+    exit 1
+fi
 
-# Clone repositories
-safe_clone "$repo1_url" "$temp_dir/repo1"
-safe_clone "$repo2_url" "$temp_dir/repo2"
+# Enter the forked repo
+cd forked_repo || exit 1
 
-# Enter the first repo
-cd "$temp_dir/repo1" || exit 1
+# Ensure we're on the main branch
+git checkout main
+
+# Add the original repo as a remote
+git remote add upstream "$original_url"
+git fetch upstream
 
 # Create a new branch for merging
 merge_branch="merge_$(date +%Y%m%d_%H%M%S)"
 git checkout -b "$merge_branch"
 
-# Add the second repo as a remote
-git remote add repo2 "../repo2"
-git fetch repo2
-
-# Merge changes from repo2
-echo "Merging changes from the second repository..."
-if ! git merge --no-commit --no-ff repo2/main; then
+# Merge changes from the original repo
+echo "Merging changes from the original repository..."
+if ! git merge --no-commit --no-ff "upstream/$original_branch"; then
     echo "Merge resulted in conflicts. Attempting to resolve..."
     resolve_conflicts
 fi
@@ -123,24 +116,33 @@ if [ -n "$remaining_conflicts" ]; then
     echo "The following files still have conflicts that need manual resolution:"
     echo "$remaining_conflicts"
     echo "Please resolve these conflicts manually, then run 'git add' on the resolved files."
+    echo "After resolving conflicts, commit the changes and push the branch to your fork."
+    echo "Then, you can create a pull request from your fork to the original repository."
 else
     echo "All conflicts have been resolved automatically."
-    git commit -m "Merged changes from repo2"
+    git commit -m "Merged changes from upstream/$original_branch"
+    
+    # Push the branch to the fork
+    git push -u origin "$merge_branch"
+    
+    # Construct the pull request URL
+    repo_name=$(basename -s .git "$(git remote get-url origin)")
+    pr_url="https://github.com/$github_username/$repo_name/compare/main...$merge_branch"
+    
+    echo "Changes have been pushed to your fork."
+    echo "To create a pull request, visit this URL:"
+    echo "$pr_url"
 fi
 
-echo "Merge process completed. The changes from repo2 have been merged into the '$merge_branch' branch."
+echo "Merge process completed. The changes from the original repository have been merged into the '$merge_branch' branch."
 echo "To review the changes and resolve any remaining conflicts, you can:"
 echo "1. Use 'git status' to see the current state of the repository"
 echo "2. Use 'git diff' to see the changes in detail"
 echo "3. Edit any conflicting files manually to resolve remaining conflicts"
 echo "4. Use 'git add' to stage resolved files"
 echo "5. Once all conflicts are resolved, use 'git commit' to finalize the merge"
-echo ""
-echo "After resolving all conflicts and committing, you can merge this branch into your main branch:"
-echo "git checkout main"
-echo "git merge $merge_branch"
-
-echo "The merged repository is located at: $temp_dir/repo1"
+echo "6. Push your changes with 'git push origin $merge_branch'"
+echo "7. Create a pull request from your fork to the original repository"
 
 if [ -f unmerged_files.txt ]; then
     echo "Files that could not be automatically merged:"
@@ -148,3 +150,5 @@ if [ -f unmerged_files.txt ]; then
 else
     echo "All files were successfully merged automatically."
 fi
+
+echo "The merged repository is located at: $(pwd)"
