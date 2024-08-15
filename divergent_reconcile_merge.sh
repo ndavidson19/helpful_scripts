@@ -70,6 +70,21 @@ resolve_conflicts() {
     fi
 }
 
+# Parse command line arguments
+allow_conflicts=false
+while getopts ":c" opt; do
+    case ${opt} in
+        c )
+            allow_conflicts=true
+            ;;
+        \? )
+            echo "Invalid Option: -$OPTARG" 1>&2
+            exit 1
+            ;;
+    esac
+done
+shift $((OPTIND -1))
+
 # Main script
 
 # Get repository URLs
@@ -106,21 +121,30 @@ git checkout -b "$merge_branch"
 # Merge changes from the original repo
 echo "Merging changes from the original repository..."
 if ! git merge --no-commit --no-ff "upstream/$original_branch"; then
-    echo "Merge resulted in conflicts. Attempting to resolve..."
-    resolve_conflicts
+    if [ "$allow_conflicts" = true ]; then
+        echo "Conflicts detected, but -c flag is set. Proceeding with conflicted files."
+    else
+        echo "Merge resulted in conflicts. Attempting to resolve..."
+        resolve_conflicts
+    fi
 fi
 
 # Check remaining conflicts
 remaining_conflicts=$(git diff --name-only --diff-filter=U)
-if [ -n "$remaining_conflicts" ]; then
+if [ -n "$remaining_conflicts" ] && [ "$allow_conflicts" = false ]; then
     echo "The following files still have conflicts that need manual resolution:"
     echo "$remaining_conflicts"
     echo "Please resolve these conflicts manually, then run 'git add' on the resolved files."
     echo "After resolving conflicts, commit the changes and push the branch to your fork."
     echo "Then, you can create a pull request from your fork to the original repository."
 else
-    echo "All conflicts have been resolved automatically."
-    git commit -m "Merged changes from upstream/$original_branch"
+    if [ -z "$remaining_conflicts" ]; then
+        echo "All conflicts have been resolved automatically."
+        git commit -m "Merged changes from upstream/$original_branch"
+    else
+        echo "Committing merge with unresolved conflicts."
+        git commit -m "Merged changes from upstream/$original_branch (with conflicts)" --allow-empty
+    fi
     
     # Push the branch to the fork
     git push -u origin "$merge_branch"
